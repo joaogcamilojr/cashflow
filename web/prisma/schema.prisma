@@ -1,0 +1,423 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum AssetType {
+  FIAT
+  CRYPTO
+  POINTS
+  OTHER
+}
+
+enum AccountType {
+  CASH_WALLET
+  BANK_ACCOUNT
+  INTERNATIONAL_ACCOUNT
+  MULTI_CURRENCY_ACCOUNT
+  BENEFIT_ACCOUNT
+  GIFT_CARD
+  DIGITAL_BALANCE
+  CRYPTO_WALLET
+  CREDIT_CARD
+  PREPAID_CARD
+  OTHER
+}
+
+enum AccountStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum AccountMemberRole {
+  OWNER
+  VIEWER
+  TRANSACTION_MANAGER
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+  EXPIRED
+}
+
+enum LedgerTransactionType {
+  OPENING_BALANCE
+  INCOME
+  EXPENSE
+  TRANSFER
+  EXCHANGE
+  REFUND
+  ADJUSTMENT
+  FEE
+  INTEREST_INCOME
+  CARD_PAYMENT
+}
+
+enum LedgerEntryDirection {
+  CREDIT
+  DEBIT
+}
+
+enum ExchangeRateSource {
+  PROVIDER
+  MANUAL
+  CARD_STATEMENT
+  ACCOUNT_STATEMENT
+}
+
+enum CardType {
+  CREDIT
+  DEBIT
+  PREPAID
+  BENEFIT
+  GIFT
+  VIRTUAL
+}
+
+enum YieldType {
+  NONE
+  FIXED_RATE
+  VARIABLE_RATE
+  MANUAL
+}
+
+model User {
+  id                  String                   @id @default(cuid())
+  email               String                   @unique
+  emailVerifiedAt     DateTime?
+  displayName         String?
+  baseAssetId         String?
+  locale              String                   @default("pt-BR")
+  timezone            String                   @default("America/Sao_Paulo")
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
+  archivedAt          DateTime?
+  baseAsset           Asset?                   @relation("UserBaseAsset", fields: [baseAssetId], references: [id], onDelete: SetNull)
+  ownedAccounts       Account[]                @relation("AccountOwner")
+  memberships         AccountMember[]
+  sessions            AuthSession[]
+  refreshTokens       AuthRefreshToken[]
+  emailVerifications  EmailVerificationToken[]
+  loginCodes          LoginCode[]
+  createdTransactions LedgerTransaction[]      @relation("TransactionCreator")
+  sentInvitations     AccountShareInvitation[] @relation("InvitationSender")
+}
+
+model AuthSession {
+  id         String    @id @default(cuid())
+  userId     String
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  lastSeenAt DateTime  @default(now())
+  createdAt  DateTime  @default(now())
+  revokedAt  DateTime?
+  userAgent  String?
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@index([expiresAt])
+}
+
+model AuthRefreshToken {
+  id         String    @id @default(cuid())
+  userId     String
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  createdAt  DateTime  @default(now())
+  revokedAt  DateTime?
+  replacedBy String?
+  userAgent  String?
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@index([expiresAt])
+}
+
+model EmailVerificationToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+model LoginCode {
+  id        String    @id @default(cuid())
+  userId    String
+  codeHash  String
+  expiresAt DateTime
+  usedAt    DateTime?
+  attempts  Int       @default(0)
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+model Asset {
+  id                  String               @id @default(cuid())
+  code                String               @unique
+  name                String
+  symbol              String
+  type                AssetType
+  decimals            Int
+  active              Boolean              @default(true)
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  baseUsers           User[]               @relation("UserBaseAsset")
+  balances            AccountBalance[]
+  ledgerEntries       LedgerEntry[]
+  ratesFrom           ExchangeRate[]       @relation("RateFromAsset")
+  ratesTo             ExchangeRate[]       @relation("RateToAsset")
+  cardLimits          CardProfile[]        @relation("CardLimitAsset")
+  yieldConfigurations YieldConfiguration[]
+  fxFrom              FxConversion[]       @relation("FxFromAsset")
+  fxTo                FxConversion[]       @relation("FxToAsset")
+  fxFee               FxConversion[]       @relation("FxFeeAsset")
+
+  @@index([active, type])
+}
+
+model Account {
+  id                        String                   @id @default(cuid())
+  ownerId                   String
+  name                      String
+  type                      AccountType
+  status                    AccountStatus            @default(ACTIVE)
+  description               String?
+  institutionName           String?
+  countryCode               String?                  @db.VarChar(2)
+  externalReference         String?
+  color                     String?
+  icon                      String?
+  includeInNetWorth         Boolean                  @default(true)
+  includeInAvailableBalance Boolean                  @default(true)
+  createdAt                 DateTime                 @default(now())
+  updatedAt                 DateTime                 @updatedAt
+  archivedAt                DateTime?
+  owner                     User                     @relation("AccountOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  balances                  AccountBalance[]
+  members                   AccountMember[]
+  invitations               AccountShareInvitation[]
+  cardProfile               CardProfile?
+  yieldConfigurations       YieldConfiguration[]
+  transactions              LedgerTransaction[]
+  ledgerEntries             LedgerEntry[]
+
+  @@index([ownerId, status, updatedAt])
+  @@index([ownerId, type])
+}
+
+model AccountBalance {
+  id               String            @id @default(cuid())
+  accountId        String
+  assetId          String
+  currentBalance   Decimal           @default(0) @db.Decimal(38, 18)
+  availableBalance Decimal?          @db.Decimal(38, 18)
+  lastCalculatedAt DateTime          @default(now())
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  account          Account           @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  asset            Asset             @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  entries          LedgerEntry[]
+  snapshots        BalanceSnapshot[]
+
+  @@unique([accountId, assetId])
+  @@index([accountId, assetId])
+}
+
+model AccountMember {
+  id        String            @id @default(cuid())
+  accountId String
+  userId    String
+  role      AccountMemberRole
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+  account   Account           @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  user      User              @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([accountId, userId])
+  @@index([userId, accountId])
+}
+
+model AccountShareInvitation {
+  id              String            @id @default(cuid())
+  accountId       String
+  invitedByUserId String
+  email           String
+  role            AccountMemberRole
+  status          InvitationStatus  @default(PENDING)
+  tokenHash       String?           @unique
+  expiresAt       DateTime
+  acceptedAt      DateTime?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  account         Account           @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  invitedBy       User              @relation("InvitationSender", fields: [invitedByUserId], references: [id], onDelete: Restrict)
+
+  @@index([email, status])
+  @@index([accountId, status])
+}
+
+model CardProfile {
+  accountId    String   @id
+  type         CardType
+  brand        String?
+  lastFour     String?  @db.VarChar(4)
+  closingDay   Int?
+  dueDay       Int?
+  creditLimit  Decimal? @db.Decimal(38, 18)
+  limitAssetId String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  account      Account  @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  limitAsset   Asset?   @relation("CardLimitAsset", fields: [limitAssetId], references: [id], onDelete: SetNull)
+
+  @@index([limitAssetId])
+}
+
+model YieldConfiguration {
+  id           String    @id @default(cuid())
+  accountId    String
+  assetId      String
+  type         YieldType
+  annualRate   Decimal?  @db.Decimal(24, 12)
+  providerName String?
+  active       Boolean   @default(true)
+  startedAt    DateTime
+  endedAt      DateTime?
+  metadata     Json?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  account      Account   @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  asset        Asset     @relation(fields: [assetId], references: [id], onDelete: Restrict)
+
+  @@unique([accountId, assetId, startedAt])
+  @@index([accountId, active])
+}
+
+model LedgerTransaction {
+  id              String                @id @default(cuid())
+  createdByUserId String
+  accountId       String?
+  type            LedgerTransactionType
+  description     String
+  notes           String?
+  occurredAt      DateTime
+  idempotencyKey  String?
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+  deletedAt       DateTime?
+  reversedAt      DateTime?
+  reversalOfId    String?
+  createdBy       User                  @relation("TransactionCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  account         Account?              @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  reversalOf      LedgerTransaction?    @relation("TransactionReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversals       LedgerTransaction[]   @relation("TransactionReversal")
+  entries         LedgerEntry[]
+  fxConversion    FxConversion?
+
+  @@unique([createdByUserId, idempotencyKey])
+  @@index([createdByUserId, type, occurredAt])
+  @@index([accountId, occurredAt])
+}
+
+model LedgerEntry {
+  id               String               @id @default(cuid())
+  transactionId    String
+  accountId        String
+  accountBalanceId String
+  assetId          String
+  direction        LedgerEntryDirection
+  amount           Decimal              @db.Decimal(38, 18)
+  balanceAfter     Decimal              @db.Decimal(38, 18)
+  createdAt        DateTime             @default(now())
+  transaction      LedgerTransaction    @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+  account          Account              @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  accountBalance   AccountBalance       @relation(fields: [accountBalanceId], references: [id], onDelete: Restrict)
+  asset            Asset                @relation(fields: [assetId], references: [id], onDelete: Restrict)
+
+  @@index([accountId, assetId, createdAt])
+  @@index([accountBalanceId, createdAt])
+  @@index([transactionId])
+}
+
+model FxConversion {
+  id                String             @id @default(cuid())
+  transactionId     String             @unique
+  fromAssetId       String
+  toAssetId         String
+  fromAmount        Decimal            @db.Decimal(38, 18)
+  toAmount          Decimal            @db.Decimal(38, 18)
+  grossRate         Decimal            @db.Decimal(38, 18)
+  effectiveRate     Decimal            @db.Decimal(38, 18)
+  marketRate        Decimal?           @db.Decimal(38, 18)
+  spreadAmount      Decimal?           @db.Decimal(38, 18)
+  spreadPercentage  Decimal?           @db.Decimal(24, 12)
+  fixedFeeAmount    Decimal?           @db.Decimal(38, 18)
+  fixedFeeAssetId   String?
+  provider          String?
+  source            ExchangeRateSource
+  providerTimestamp DateTime?
+  quotedAt          DateTime
+  settledAt         DateTime?
+  metadata          Json?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  transaction       LedgerTransaction  @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+  fromAsset         Asset              @relation("FxFromAsset", fields: [fromAssetId], references: [id], onDelete: Restrict)
+  toAsset           Asset              @relation("FxToAsset", fields: [toAssetId], references: [id], onDelete: Restrict)
+  fixedFeeAsset     Asset?             @relation("FxFeeAsset", fields: [fixedFeeAssetId], references: [id], onDelete: SetNull)
+
+  @@index([fromAssetId, toAssetId, quotedAt])
+}
+
+model BalanceSnapshot {
+  id               String         @id @default(cuid())
+  accountBalanceId String
+  balance          Decimal        @db.Decimal(38, 18)
+  snapshotAt       DateTime
+  source           String
+  createdAt        DateTime       @default(now())
+  accountBalance   AccountBalance @relation(fields: [accountBalanceId], references: [id], onDelete: Restrict)
+
+  @@unique([accountBalanceId, snapshotAt])
+  @@index([accountBalanceId, snapshotAt])
+}
+
+model ExchangeRate {
+  id                String             @id @default(cuid())
+  fromAssetId       String
+  toAssetId         String
+  rate              Decimal            @db.Decimal(38, 18)
+  provider          String             @db.VarChar(64)
+  referenceType     String             @db.VarChar(32)
+  source            ExchangeRateSource @default(PROVIDER)
+  providerTimestamp DateTime
+  fetchedAt         DateTime           @default(now())
+  indicative        Boolean            @default(true)
+  stale             Boolean            @default(false)
+  fromAsset         Asset              @relation("RateFromAsset", fields: [fromAssetId], references: [id], onDelete: Restrict)
+  toAsset           Asset              @relation("RateToAsset", fields: [toAssetId], references: [id], onDelete: Restrict)
+
+  @@unique([fromAssetId, toAssetId, providerTimestamp, provider])
+  @@index([fromAssetId, toAssetId, fetchedAt])
+}
+
+model WaitlistEntry {
+  id             String   @id @default(cuid())
+  email          String   @unique
+  locale         String   @default("pt-BR")
+  consentVersion String
+  createdAt      DateTime @default(now())
+}
